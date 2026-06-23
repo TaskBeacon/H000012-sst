@@ -21,6 +21,11 @@ export function run_trial(
   const correctKey = String(condSide === "left" ? settings.left_key ?? "f" : settings.right_key ?? "j");
   const keyList = ((settings.key_list as string[]) ?? ["f", "j"]).map(String);
   const goDuration = Number(settings.go_duration ?? 1);
+  const triggers = (settings.triggers as Record<string, number | string | null | undefined> | undefined) ?? {};
+  const trigger = (name: string): number | null => {
+    const value = Number(triggers[name]);
+    return Number.isFinite(value) ? value : null;
+  };
   const resolveSsd = () => controller.get_ssd(condSide);
   const resolveRemaining = () => Math.max(0, goDuration - resolveSsd());
 
@@ -62,15 +67,39 @@ export function run_trial(
         keys: keyList,
         correct_keys: correctKey,
         duration: goDuration,
+        onset_trigger: trigger("go_onset"),
+        response_trigger: trigger("go_response"),
+        timeout_trigger: trigger("go_miss"),
         terminate_on_response: true
       })
       .to_dict();
 
-    trial
+    const noResponse = trial
       .unit("no_response_feedback")
       .when((snapshot) => !Boolean(snapshot.units.go?.key_press))
-      .addStim(stimBank.get("no_response_feedback"))
-      .show({ duration: Number(settings.no_response_feedback_duration ?? 0.8) })
+      .addStim(stimBank.get("no_response_feedback"));
+    set_trial_context(noResponse, {
+      trial_id: trial.trial_id,
+      phase: "no_response_feedback",
+      deadline_s: Number(settings.no_response_feedback_duration ?? 0.8),
+      valid_keys: [],
+      block_id: trial.block_id,
+      condition_id: condition,
+      task_factors: {
+        condition,
+        stage: "no_response_feedback",
+        condition_kind: condKind,
+        condition_side: condSide,
+        trial_index: trial.trial_index,
+        block_id: trial.block_id
+      },
+      stim_id: "no_response_feedback"
+    });
+    noResponse
+      .show({
+        duration: Number(settings.no_response_feedback_duration ?? 0.8),
+        onset_trigger: trigger("no_response_feedback_onset")
+      })
       .to_dict();
 
     return trial;
@@ -95,6 +124,8 @@ export function run_trial(
     .captureResponse({
       keys: keyList,
       duration: () => resolveSsd(),
+      onset_trigger: trigger("go_onset"),
+      response_trigger: trigger("pre_stop_response"),
       terminate_on_response: false
     })
     .set_state({
@@ -113,7 +144,8 @@ export function run_trial(
       condition,
       stage: "stop_signal_window",
       trial_index: trial.trial_index,
-      block_id: trial.block_id
+      block_id: trial.block_id,
+      ssd_s: () => resolveSsd()
     },
     stim_id: condition
   });
@@ -121,6 +153,8 @@ export function run_trial(
     .captureResponse({
       keys: keyList,
       duration: () => resolveRemaining(),
+      onset_trigger: trigger("stop_onset"),
+      response_trigger: trigger("on_stop_response"),
       terminate_on_response: true
     })
     .set_state({
